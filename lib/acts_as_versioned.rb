@@ -66,7 +66,7 @@ module ActiveRecord #:nodoc:
     #
     # See ActiveRecord::Acts::Versioned::ClassMethods#acts_as_versioned for configuration options
     module Versioned
-      CALLBACKS = [:set_new_version, :save_version, :save_version?]
+      CALLBACKS = [:save_version, :save_version?]
       def self.included(base) # :nodoc:
         base.extend ClassMethods
       end
@@ -208,8 +208,7 @@ module ActiveRecord #:nodoc:
                 @latest ||= find(:first, :order => '#{version_column} desc')
               end
             end
-            before_save  :set_new_version
-            after_save   :save_version
+            before_save  :save_version
             after_save   :clear_old_versions
 
             unless options[:if_changed].nil?
@@ -223,6 +222,11 @@ module ActiveRecord #:nodoc:
 
           # create the dynamic versioned model
           const_set(versioned_class_name, Class.new(ActiveRecord::Base)).class_eval do
+            # grab version number of just saved parent (used when optomistacally locking)
+            before_save :set_version_number, :if => Proc.new{|v| v.send(original_class.version_column).to_i == 0 } 
+            def set_version_number
+              write_attribute(original_class.version_column,self.send(original_class.to_s.demodulize.underscore).send(original_class.version_column))
+            end
             def self.reloadable? ; false ; end
             # find first version before the given version
             def self.before(version)
@@ -265,15 +269,18 @@ module ActiveRecord #:nodoc:
           base.extend ClassMethods
         end
 
-        # Saves a version of the model in the versioned table.  This is called in the after_save callback by default
+        # Saves a version of the model in the versioned table.  This is called in the before_save callback by default
         def save_version
+          @saving_version = new_record? || save_version?
           if @saving_version
             @saving_version = nil
-            rev = self.class.versioned_class.new
-            clone_versioned_model(self, rev)
-            rev.send("#{self.class.version_column}=", send(self.class.version_column))
-            rev.send("#{self.class.versioned_foreign_key}=", id)
-            rev.save
+            attrs = clone_versioned_attributes            
+            # sets the new version before saving, unless you're using optimistic locking.  In that case, let it take care of the version.
+            if new_record? || (!locking_enabled? && save_version?) 
+              self.send("#{self.class.version_column}=", next_version) 
+              attrs[self.class.version_column.to_sym] = send(self.class.version_column)         
+            end
+            versions.build(attrs)
           end
         end
 
@@ -323,6 +330,21 @@ module ActiveRecord #:nodoc:
         
         def altered?
           track_altered_attributes ? (version_if_changed - changed).length < version_if_changed.length : changed?
+        end
+
+        def clone_versioned_attributes
+          attrs = {}
+          self.class.versioned_columns.each do |col|
+            attrs[col.name.to_sym] = self.send(col.name) if self.has_attribute?(col.name)
+            #new_model.send("#{col.name}=", orig_model.send(col.name)) if orig_model.has_attribute?(col.name)
+          end
+          
+          # STI type field
+          if self.has_attribute?(self.class.inheritance_column)
+            attrs[self.class.versioned_inheritance_column.to_sym] = self.send(self.class.inheritance_column)
+          end
+
+          return attrs          
         end
 
         # Clones a model.  Used when saving a new version or reverting a model's version.
@@ -379,11 +401,6 @@ module ActiveRecord #:nodoc:
         def empty_callback() end #:nodoc:
 
         protected
-          # sets the new version before saving, unless you're using optimistic locking.  In that case, let it take care of the version.
-          def set_new_version
-            @saving_version = new_record? || save_version?
-            self.send("#{self.class.version_column}=", next_version) if new_record? || (!locking_enabled? && save_version?)
-          end
 
           # Gets the next available version for the current record, or 1 for a new record
           def next_version
