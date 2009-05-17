@@ -195,14 +195,7 @@ class VersionedTest < ActiveSupport::TestCase
   end
 
   def test_version_max_limit
-   	
-
-#  require 'rubygems'
-#  require 'ruby-debug/debugger'
-
     p = LockedPage.create! :title => "title"
-puts "AAAA"
-#Debugger.start
     p.update_attributes(:title => "title1")
     p.update_attributes(:title => "title2")
     5.times do |i|

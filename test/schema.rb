@@ -15,7 +15,7 @@ ActiveRecord::Schema.define(:version => 0) do
     t.column :title, :string, :limit => 255
     t.column :body, :text
     t.column :created_on, :datetime
-    t.column :updated_on, :datetime
+    t.column :updated_on, :datetime   
     t.column :author_id, :integer
     t.column :revisor_id, :integer
   end
@@ -79,4 +79,31 @@ ActiveRecord::Schema.define(:version => 0) do
   end
   
   add_index :landmark_versions, [:landmark_id, :version], :unique => true
+  
+  create_table :published_pages, :force => true do |t|
+    t.column :version, :integer
+    t.column :title, :string, :limit => 255
+    t.column :body, :text
+    t.column :created_on, :datetime
+    t.column :updated_on, :datetime
+    t.column :published_at, :datetime
+    t.column :author_id, :integer
+    t.column :revisor_id, :integer
+  end
+
+  create_table :published_page_versions, :force => true do |t|
+    t.column :published_page_id, :integer
+    t.column :version, :integer
+    t.column :title, :string, :limit => 255
+    t.column :body, :text
+    t.column :created_on, :datetime
+    t.column :updated_on, :datetime
+    t.column :published_at, :datetime    
+    t.column :author_id, :integer
+    t.column :revisor_id, :integer
+  end
+  
+  add_index :published_page_versions, [:published_page_id, :version], :unique => true
+    
+  
 end
