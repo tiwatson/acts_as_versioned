@@ -98,7 +98,8 @@ ActiveRecord::Schema.define(:version => 0) do
     t.column :body, :text
     t.column :created_on, :datetime
     t.column :updated_on, :datetime
-    t.column :published_at, :datetime    
+    t.column :published_at, :datetime
+    t.column :published, :boolean, :default => false 
     t.column :author_id, :integer
     t.column :revisor_id, :integer
   end

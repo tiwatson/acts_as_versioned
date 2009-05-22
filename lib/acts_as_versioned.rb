@@ -170,7 +170,7 @@ module ActiveRecord #:nodoc:
 
           cattr_accessor :versioned_class_name, :versioned_foreign_key, :versioned_table_name, :versioned_inheritance_column, 
             :version_column, :max_version_limit, :track_altered_attributes, :version_condition, :version_sequence_name, :non_versioned_columns,
-            :version_association_options, :version_if_changed, :published_column
+            :version_association_options, :version_if_changed, :published_column, :versioned_published
 
           self.versioned_class_name         = options[:class_name]  || "Version"
           self.versioned_foreign_key        = options[:foreign_key] || self.to_s.foreign_key
@@ -186,7 +186,12 @@ module ActiveRecord #:nodoc:
                                                 :foreign_key => versioned_foreign_key,
                                                 :dependent   => :delete_all
                                               }.merge(options[:association_options] || {})
+          self.versioned_published          = options[:published] || 'published'
           self.published_column             = options[:published_column]
+          if !self.published_column.nil?
+            cattr_accessor  :published
+            #alias :published? :published
+          end
 
           if block_given?
             extension_module_name = "#{versioned_class_name}Extension"
@@ -252,6 +257,10 @@ module ActiveRecord #:nodoc:
             def versions_count
               page.version
             end
+            
+            def live?
+              self.send(original_class.version_column).to_i == self.send(original_class.to_s.demodulize.underscore).send(original_class.version_column).to_i
+            end
           end
 
           versioned_class.cattr_accessor :original_class
@@ -275,15 +284,33 @@ module ActiveRecord #:nodoc:
           @saving_version = new_record? || save_version?
           if @saving_version
             @saving_version = nil
-            attrs = clone_versioned_attributes            
+
+            if !self.class.published_column.nil? # drafts/published on
+              self.send("#{self.class.published_column}=", Time.now) if self.send(self.class.published_column).nil? && self.send("#{self.class.versioned_published}") == true
+            end 
+
+            attrs = clone_versioned_attributes  
+            
+            self.send("#{self.class.published_column}=", nil) if !self.class.published_column.nil? && ( self.send("#{self.class.versioned_published}") != true || attrs[self.class.published_column.to_sym] > Time.now )
+
+ 
             # sets the new version before saving, unless you're using optimistic locking.  In that case, let it take care of the version.
             if new_record? || (!locking_enabled? && save_version?) 
-              self.send("#{self.class.version_column}=", next_version) if !self.class.published_column.nil? && (new_record? || (!self.send(self.class.published_column).nil? && self.send(self.class.published_column) <= Time.now))
+              if !new_record? && !self.class.published_column.nil?  
+                self.send("#{self.class.version_column}=", next_version) if !self.send(self.class.published_column).nil? && self.send(self.class.published_column) <= Time.now && self.send("#{self.class.versioned_published}") == true
+              else
+                self.send("#{self.class.version_column}=", next_version)
+              end
               attrs[self.class.version_column.to_sym] = next_version #send(self.class.version_column)         
             end
             versions.build(attrs)
+           
+            
             # If self is not published.. revert to current version (revert happens before save.. drafts only saved in _versions)
-            revert_to(self.send(self.class.version_column)) if !self.class.published_column.nil? && (self.send(self.class.version_column).to_i != attrs[self.class.version_column.to_sym].to_i)
+            if !self.class.published_column.nil? && !new_record? &&  (self.send(self.class.version_column).to_i != attrs[self.class.version_column.to_sym].to_i)
+              revert_to(self.send(self.class.version_column))
+            end
+          
           end
         end
 
@@ -345,6 +372,12 @@ module ActiveRecord #:nodoc:
           # STI type field
           if self.has_attribute?(self.class.inheritance_column)
             attrs[self.class.versioned_inheritance_column.to_sym] = self.send(self.class.inheritance_column)
+          end
+
+          # published field
+          if !self.class.published_column.nil?
+            attrs[self.class.versioned_published.to_sym] = self.send(self.class.versioned_published)
+            attrs[self.class.published_column.to_sym] = self.send(self.class.published_column)
           end
 
           return attrs          
@@ -451,6 +484,10 @@ module ActiveRecord #:nodoc:
                 :scale     => type_col.scale,
                 :precision => type_col.precision
             end
+            
+            if published_column 
+              self.connection.add_column versioned_table_name, versioned_published, :boolean, :default => false
+            end              
             
             self.connection.add_index versioned_table_name, versioned_foreign_key
           end

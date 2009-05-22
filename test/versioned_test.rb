@@ -9,6 +9,8 @@ class VersionedTest < ActiveSupport::TestCase
   def test_saves_versioned_copy
     p = Page.create! :title => 'first title', :body => 'first body'
     assert !p.new_record?
+    #require 'rubygems'; require 'ruby-debug'; debugger;
+
     assert_equal 1, p.versions.size
     assert_equal 1, p.version
     assert_instance_of Page.versioned_class, p.versions.first
