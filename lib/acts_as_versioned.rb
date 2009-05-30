@@ -170,7 +170,7 @@ module ActiveRecord #:nodoc:
 
           cattr_accessor :versioned_class_name, :versioned_foreign_key, :versioned_table_name, :versioned_inheritance_column, 
             :version_column, :max_version_limit, :track_altered_attributes, :version_condition, :version_sequence_name, :non_versioned_columns,
-            :version_association_options, :version_if_changed, :published_column, :versioned_published
+            :version_association_options, :version_if_changed, :published_column, :versioned_published, :draft_column
 
           self.versioned_class_name         = options[:class_name]  || "Version"
           self.versioned_foreign_key        = options[:foreign_key] || self.to_s.foreign_key
@@ -186,11 +186,14 @@ module ActiveRecord #:nodoc:
                                                 :foreign_key => versioned_foreign_key,
                                                 :dependent   => :delete_all
                                               }.merge(options[:association_options] || {})
+                                              
           self.versioned_published          = options[:published] || 'published'
-          self.published_column             = options[:published_column]
+          self.published_column             = options[:published_column]          
+          self.draft_column                 = options[:draft_column]
+          self.non_versioned_columns << options[:draft_column] if !self.draft_column.nil?
+          
           if !self.published_column.nil?
-            cattr_accessor  :published
-            #alias :published? :published
+            attr_accessor  self.versioned_published
           end
 
           if block_given?
@@ -213,6 +216,7 @@ module ActiveRecord #:nodoc:
               def latest
                 @latest ||= find(:first, :order => '#{version_column} desc')
               end
+
             end
             before_save  :save_version
             after_save   :clear_old_versions
@@ -224,6 +228,9 @@ module ActiveRecord #:nodoc:
             end
 
             include options[:extend] if options[:extend].is_a?(Module)
+
+
+                                
           CLASS_METHODS
 
           # create the dynamic versioned model
@@ -259,7 +266,7 @@ module ActiveRecord #:nodoc:
             end
             
             def live?
-              self.send(original_class.version_column).to_i == self.send(original_class.to_s.demodulize.underscore).send(original_class.version_column).to_i
+              !self.send(original_class.published_column).nil? && self.send(original_class.version_column).to_i == self.send(original_class.to_s.demodulize.underscore).send(original_class.version_column).to_i
             end
           end
 
@@ -293,21 +300,29 @@ module ActiveRecord #:nodoc:
             
             self.send("#{self.class.published_column}=", nil) if !self.class.published_column.nil? && ( self.send("#{self.class.versioned_published}") != true || attrs[self.class.published_column.to_sym] > Time.now )
 
- 
+            # reset has_unpublished_version to true/yes (if using that feature)
+            self.send("#{self.class.draft_column}=", true) if !self.class.draft_column.nil?
+
             # sets the new version before saving, unless you're using optimistic locking.  In that case, let it take care of the version.
             if new_record? || (!locking_enabled? && save_version?) 
-              if !new_record? && !self.class.published_column.nil?  
-                self.send("#{self.class.version_column}=", next_version) if !self.send(self.class.published_column).nil? && self.send(self.class.published_column) <= Time.now && self.send("#{self.class.versioned_published}") == true
+              self.send("#{self.class.version_column}=", next_version) if new_record?
+              
+              if !self.class.published_column.nil?  
+                if !self.send(self.class.published_column).nil? && self.send(self.class.published_column) <= Time.now && self.send("#{self.class.versioned_published}") == true
+                  self.send("#{self.class.version_column}=", next_version)
+                  # set has_unpublished_version to false/no (if using that feature)
+                  self.send("#{self.class.draft_column}=", false) if !self.class.draft_column.nil?
+                end
               else
                 self.send("#{self.class.version_column}=", next_version)
               end
+
               attrs[self.class.version_column.to_sym] = next_version #send(self.class.version_column)         
             end
             versions.build(attrs)
-           
             
             # If self is not published.. revert to current version (revert happens before save.. drafts only saved in _versions)
-            if !self.class.published_column.nil? && !new_record? &&  (self.send(self.class.version_column).to_i != attrs[self.class.version_column.to_sym].to_i)
+            if !self.class.published_column.nil? && (self.send(self.class.version_column).to_i != attrs[self.class.version_column.to_sym].to_i)
               revert_to(self.send(self.class.version_column))
             end
           
